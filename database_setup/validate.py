@@ -14,7 +14,7 @@ the database. The False signal indicates that the experiment should be rerun.
 
 class Validator:
 
-    # TODO: check that default filepath works in lab computer
+    # TODO: check that default filepath works on lab computer
     def __init__(self, database, collection, path_CSV='Log/RecordingData'): 
         '''
         Initializer for the DatabaseLoader class
@@ -128,12 +128,12 @@ class Validator:
         '''
 
         # Get CSVs from filepath
-        files = glob.glob(self.path_CSV + "*.CSV") # * means all if need specific format then *.csv
+        files = glob.glob(self.path_CSV + "*.CSV")
 
         # Get latest modified file
         latest_file = max(files, key=os.path.getctime)
 
-            # Read csv
+        # Read csv
         df = pd.read_csv(latest_file, skiprows=[0,1])
 
         # Retrieve date and processed df
