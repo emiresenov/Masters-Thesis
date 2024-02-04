@@ -7,9 +7,15 @@ from pymongo import MongoClient
 '''
 The Validator class validates the steadiness of magnetron sputter experiments based on their CSV outputs.
 Steadiness is judged by a set of parameters settling below a given standard deviation before a given time limit.
-Steady and completely unsteady experiments are evaluated to "True" by the evaluate function and stored in a MongoDB database. 
+Steady and completely unsteady experiments are evaluated to "True" by the validate function and stored in a MongoDB database. 
 Experiments which settle after the given time limit are evaluated to "False" by the validate function and are not stored in 
 the database. The False signal indicates that the experiment should be rerun.
+
+TODO: 
+    - Add metadata (where is it coming from)?
+    - Add all other fields that Jonathan mentioned when we have access to them
+    - Test that default CSV path works on the lab computer
+    - Test that everything else works on the lab computer 
 '''
 
 class Validator:
@@ -25,39 +31,32 @@ class Validator:
         collection: which collection of given database to enter experiment data in
         path_CSV: file path for experiment CSV files (defaults to Log/RecordingData)
 
+        Class variables
+        ---------------
+        sigma_V: 
+        sigma_P: 
+        t:
+        t_d:
+        steady_params: 
         '''
 
-        # Connect to database server
         client = MongoClient()
-
-        # Get/create database
         self.db = client[database]
-
-        # Get/create collection
         self.collection = self.db[collection]
-
-        # Store CSV filepath
         self.path_CSV = path_CSV
 
-        # Standard deviation threshold for voltages
         self.sigma_V = 1
-
-        # Standard deviation threshold for pressure
         self.sigma_P = 0.1
-
-        # Time threshold
         self.t = 0.5
-
-        # Time drag threshold
         self.t_d = 0.3
-
-        # Parameters which define the steady state
-        self.steady_params = [
-            'PC Capman Pressure', 
-            'Power Supply 1 Voltage', 
-            'Power Supply 3 Voltage', 
-            'Power Supply 5 DC Bias'
-        ]
+        self.thresholds = {
+            'PC Capman Pressure' : self.sigma_P,
+            'Power Supply 1 Voltage' : self.sigma_V, 
+            'Power Supply 3 Voltage' : self.sigma_V,
+            'Power Supply 5 DC Bias' : self.sigma_V
+        }
+            
+        
 
 
 
@@ -102,20 +101,116 @@ class Validator:
 
 
     def validate(self):
+        '''
+        The validate function is the core function of the Validator class. The function (1) retrieves the latest 
+        sputtering experiment CSV file from a given filepath, (2) calculates if the experiment has settled
+        according to given (time and std) thresholds, (3) stores settled and fully unsettled experiments in 
+        the database, and returns a True bool, since these have clear results; alternatively, does not store
+        the experiment if the experiment settles too late within given thresholds and returns False, indicating
+        that the experiment controller should retry the experiment.
+        '''
 
         # Get date of latest experiment and its CSV as dataframe
         date, df = self.getLastExperiment()
 
+        # Retrieve date and processed df
+        date, df = self.process_df(df)
+
         # Create date dictionary
         date_dict = {'Date' : date}
 
-        # Get size
+        # Get size of dataframe (n rows)
         rows = len(df.axes[0])
-        cols = len(df.axes[1])
 
-        # Find steady state threshold as index
-        n_threshold = int(self.t * rows)
+        # Find steady state and drag threshold as index
+        n_t = int(self.t*rows)
+        n_td = int(self.t_d*rows)
+
+        for j in range(0, n_t + n_td):
+
+            if all(df[p].tail(rows-j).std() <= self.thresholds[p] for p in self.thresholds.keys()):
+                if (j <= n_t):
+                    # Get settling time
+                    settle_time_dict = {'Settling time' : df["Time Stamp"].iloc[j]}
+
+                    # Create settled status entry (True)
+                    status_dict = {"Settled" : True}
+                    
+                    # Get mean and stds for all columns
+                    calc_dict = self.calculate_statistics(df, rows, index=j)
+
+                    # Merge all dictionaries into a doc
+                    doc = {**date_dict, **status_dict, **settle_time_dict, **df.to_dict('list'), **calc_dict}
+                    
+                    # Insert doc into database collection
+                    self.collection.insert_one(doc)
+                    
+                    return True
+                else:
+                    # Return False if experiment settles between time t and t_d, indicating that the experiment should be rerun
+                    return False
         
+        
+        '''Return True for fully unstable experiments, indicating that we have stored the result to database'''
+
+        # Created settled status entry (False)
+        status_dict = {"Settled" : False}
+
+        # Get mean and stds for all columns
+        calc_dict = self.calculate_statistics(df, rows)
+
+        # Merge all dictionaries into a doc
+        doc = {**date_dict, **status_dict, **df.to_dict('list'), **calc_dict}
+
+        # Insert doc into database collection
+        self.collection.insert_one(doc)
+
+        return True
+
+
+
+    def calculate_statistics(self, df, rows, index=1):
+        '''
+        Calculates mean and std for all fields (except time) in the dataframe
+
+        Parameters
+        ----------
+        df: processed dataframe with experiment data  
+        rows: amount of rows in the dataframe (already calculated in validate function)
+        index: in settled experiments, index indicates where measurements become stable, so
+        we only calculate statistics for where the experiment is steady
+
+        Returns
+        -------
+        calc_dict: a dictionary of mean and std for all fields (except time) in the dataframe
+
+        '''
+
+        # Prepare calculation dictionary
+        calc_keys = []
+        calc_vals = []
+        
+        # Calculate settled mean and std for all columns
+        for k in df.columns[1:]:
+            mean_key = k + ' Mean'
+            std_key = k + ' STD'
+            mean = df[k].tail(rows-index).mean()
+            std = df[k].tail(rows-index).std()
+            
+            # Round off values that are not PC Source
+            if 'PC Source' not in k:
+                mean = np.round(mean, 3)
+                std = np.round(std, 3)
+                
+            calc_keys.extend([mean_key, std_key])
+            calc_vals.extend([mean, std])
+        
+        # Create calculation dictionary
+        calc_dict = dict(zip(calc_keys, calc_vals))
+
+        return calc_dict
+    
+
     
     def getLastExperiment(self):
         '''
