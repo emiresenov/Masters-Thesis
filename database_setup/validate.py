@@ -10,12 +10,6 @@ Steadiness is judged by a set of parameters settling below a given standard devi
 Steady and completely unsteady experiments are evaluated to "True" by the validate function and stored in a MongoDB database. 
 Experiments which settle after the given time limit are evaluated to "False" by the validate function and are not stored in 
 the database. The False signal indicates that the experiment should be rerun.
-
-TODO: 
-    - Add metadata (where is it coming from)?
-    - Add all other fields that Jonathan mentioned when we have access to them
-    - Test that default CSV path works on the lab computer
-    - Test that everything else works on the lab computer 
 '''
 
 class Validator:
@@ -83,6 +77,8 @@ class Validator:
         # Save date
         date = df['Time Stamp'].iloc[0].date().strftime('%m/%d/%Y')
 
+        print(date)
+
         # Convert datetime to seconds starting from zero
         df['Time Stamp'] = (df['Time Stamp'] - df['Time Stamp'].iloc[0]).dt.total_seconds()
         
@@ -112,9 +108,6 @@ class Validator:
 
         # Get date of latest experiment and its CSV as dataframe
         date, df = self.getLastExperiment()
-
-        # Retrieve date and processed df
-        date, df = self.process_df(df)
 
         # Create date dictionary
         date_dict = {'Date' : date}
