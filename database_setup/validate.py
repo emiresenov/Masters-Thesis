@@ -113,9 +113,6 @@ class Validator:
         # Get date of latest experiment and its CSV as dataframe
         date, df = self.getLastExperiment()
 
-        # Retrieve date and processed df
-        date, df = self.process_df(df)
-
         # Create date dictionary
         date_dict = {'Date' : date}
 
